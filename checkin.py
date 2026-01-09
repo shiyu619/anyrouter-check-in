@@ -389,7 +389,7 @@ async def main():
 
     # 2. 判断是否需要推送 (有失败 OR 余额变动)
     has_failures = success_count < len(accounts)
-    should_notify = True
+    should_notify = has_failures or balance_changed
 
     if should_notify:
         print('[NOTIFY] Preparing aesthetic notification...')
