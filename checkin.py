@@ -392,23 +392,62 @@ async def main():
     should_notify = has_failures or balance_changed
 
     if should_notify:
-        print('[NOTIFY] Generating aesthetic notification...')
+        print('[NOTIFY] Preparing aesthetic notification...')
+        # 生成漂亮的 Markdown 内容
         notify_content = format_notification(results, success_count, len(accounts), exec_time)
         
-        # 打印预览
-        print("-" * 30)
-        print(notify_content)
-        print("-" * 30)
+        # 1. 尝试直接从环境变量读取 Gotify 配置 (绕过 utils.notify 以修复渲染问题)
+        # 请确保你的 .env 文件或环境变量里有 GOTIFY_URL 和 GOTIFY_TOKEN
+        gotify_url = os.getenv('GOTIFY_URL') 
+        gotify_token = os.getenv('GOTIFY_TOKEN')
         
-        # 推送消息 (确保你的 notify 模块支持 markdown，通常 gotify 默认支持)
-        # 建议在 notify.push_message 中显式指定 markdown 格式，如果那是你的库支持的参数
-        notify.push_message('AnyRouter Check-in Report', notify_content, msg_type='markdown')
-        print('[NOTIFY] Notification sent.')
+        sent_manually = False
+        
+        if gotify_url and gotify_token:
+            print('[NOTIFY] Detected Gotify config, sending with Markdown headers...')
+            try:
+                # 修正 URL：如果 URL 结尾没有 /message 且不包含 token，则手动拼接
+                # 假设用户填的是 https://push.example.com/message?token=xxx 或者 https://push.example.com
+                target_url = gotify_url
+                if 'message' not in target_url:
+                     target_url = f"{target_url.rstrip('/')}/message?token={gotify_token}"
+                
+                # 构造 Gotify 专属的高级 Payload
+                payload = {
+                    "title": "AnyRouter 签到报告",
+                    "message": notify_content,
+                    "priority": 5,
+                    "extras": {
+                        "client::display": {
+                            "contentType": "text/markdown"
+                        }
+                    }
+                }
+                
+                # 使用脚本自带的 httpx 发送
+                resp = httpx.post(target_url, json=payload, timeout=10)
+                if resp.status_code == 200:
+                    print('[SUCCESS] Notification sent via direct Gotify API')
+                    sent_manually = True
+                else:
+                    print(f'[WARN] Direct Gotify send failed: {resp.status_code} - {resp.text}')
+            except Exception as e:
+                print(f'[WARN] Failed to send via direct API: {e}')
+
+        # 2. 如果上面没发送成功（比如没配环境变量，或者用的不是 Gotify），则回退到原来的 notify 模块
+        if not sent_manually:
+            print('[NOTIFY] Falling back to default notify module...')
+            # 这里我们尝试把 markdown 符号去掉，变成纯文本版，以免显示乱码
+            # 如果你坚持要 markdown，可以保留 notify_content
+            # 但既然原来的 notify 不支持渲染，不如发个干净的纯文本
+            plain_text_content = notify_content.replace('**', '').replace('### ', '').replace('`', '').replace('>', '')
+            notify.push_message('AnyRouter Check-in Report', plain_text_content, msg_type='text')
+            print('[NOTIFY] Notification sent via utils.notify (Plain Text mode)')
+
     else:
-        print('[INFO] All successful and no balance change. Silent mode.')
+        print('[INFO] All accounts successful and no balance changes detected, notification skipped')
 
     sys.exit(0 if success_count > 0 else 1)
-
 
 def run_main():
 	"""运行主函数的包装函数"""
